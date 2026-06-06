@@ -2,13 +2,14 @@
 
 import React from 'react';
 import { useAdmin } from '../AdminContext';
-import { Search } from 'lucide-react';
+import { Search, Eye, Edit } from 'lucide-react';
 
 export default function OrdersSection() {
   const {
     bookings,
     staff,
     setSelectedBooking,
+    setDrawerTab,
     searchQuery, setSearchQuery,
     statusFilter, setStatusFilter,
     serviceDateFilter, setServiceDateFilter,
@@ -168,17 +169,31 @@ export default function OrdersSection() {
                     </span>
                   </td>
                   <td className="p-4 font-semibold text-neutral-700">
-                    {staff.find(s => s.id === b.assigned_staff_id)?.name || <span className="text-neutral-400">Not Assigned</span>}
+                    {staff.find(s => String(s.id) === String(b.assigned_staff_id))?.name || <span className="text-neutral-400">Not Assigned</span>}
                     {b.staff_job_status && (
                       <div className="text-[9px] text-[#fbbf24] font-bold uppercase">{b.staff_job_status}</div>
                     )}
                   </td>
                   <td className="p-4">
                     <button
-                      onClick={() => setSelectedBooking(b)}
-                      className="px-2.5 py-1 rounded border border-neutral-200 hover:border-black font-semibold text-neutral-900 transition cursor-pointer"
+                      onClick={() => {
+                        setDrawerTab('view');
+                        setSelectedBooking(b);
+                      }}
+                      className="p-1.5 rounded-lg border border-neutral-200 hover:border-neutral-800 text-neutral-600 hover:text-neutral-900 transition bg-white cursor-pointer shadow-3xs"
+                      title="View Order Details"
                     >
-                      Edit / Review
+                      <Eye className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDrawerTab('edit');
+                        setSelectedBooking(b);
+                      }}
+                      className="p-1.5 rounded-lg border border-neutral-200 hover:border-neutral-800 text-neutral-600 hover:text-neutral-900 transition bg-white cursor-pointer shadow-3xs"
+                      title="Edit & Allocate Job"
+                    >
+                      <Edit className="w-3.5 h-3.5" />
                     </button>
                   </td>
                 </tr>

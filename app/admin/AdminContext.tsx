@@ -7,8 +7,7 @@ import { useRouter } from 'next/navigation';
 export const TAB_SLUG: Record<string, string> = {
   'Dashboard':           'dashboard',
   'Orders / Bookings':   'orders',
-  'Job Allocation':      'job-allocation',
-  'Staff Jobs':          'staff-jobs',
+  'Assigned Job':        'assigned-job',
   'Users / Customers':   'customers',
   'Staff Management':    'staff',
   'Roles & Permissions': 'roles',
@@ -55,17 +54,10 @@ export const PERMISSION_SECTIONS: {
     ]
   },
   {
-    title: "Job Allocation",
-    permKey: "assign_jobs",
-    permissions: [
-      { key: "assign_jobs", label: "Assign Cleaners to Jobs" }
-    ]
-  },
-  {
-    title: "Staff Jobs",
+    title: "Assigned Job",
     permKey: "view_staff_jobs",
     permissions: [
-      { key: "view_staff_jobs", label: "View Staff Jobs Board" }
+      { key: "view_staff_jobs", label: "View Assigned Job Board" }
     ]
   },
   {
@@ -202,6 +194,7 @@ export interface Booking {
   entry_method: string;
   custom_key_notes: string;
   customer_special_notes: string;
+  addons?: string;
   pricing: string; // JSON
   created_at: string;
   order_status: string;
@@ -270,6 +263,8 @@ interface AdminContextProps {
   setActingStaffId: (val: string) => void;
   activeTab: string;
   setActiveTab: (val: string) => void;
+  drawerTab: 'view' | 'edit';
+  setDrawerTab: (val: 'view' | 'edit') => void;
   navigateTo: (tabName: string) => void;
   switchSimulatedRole: (roleId: string) => void;
   hasPermission: (moduleName: string) => boolean;
@@ -505,7 +500,7 @@ interface AdminContextProps {
   handleRemoveRuleLink: (mappingId: string) => Promise<void>;
   handleUpdateOrderStatus: (orderId: string, newStatus: string, manualNote?: string) => void;
   handleAssignStaff: (orderId: string, staffId: string, instructions: string, confDate: string, confTime: string) => void;
-  handleStaffJobUpdate: (orderId: string, nextStatus: 'Accepted' | 'On the Way' | 'Started' | 'Completed' | 'Issue Reported', issueText?: string) => void;
+  handleStaffJobUpdate: (orderId: string, nextStatus: 'Pending' | 'Accepted' | 'On the Way' | 'Started' | 'Completed' | 'Issue Reported', issueText?: string) => void;
   handleCreateRole: (e: React.FormEvent) => Promise<void>;
   togglePermissionInNewRole: (perm: string) => void;
   isSectionSelected: (section: typeof PERMISSION_SECTIONS[0]) => boolean;
@@ -533,10 +528,11 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
 
   // Acting Profile State
   const [currentRole, setCurrentRole] = useState('1'); // Default Super Admin
-  const [actingStaffId, setActingStaffId] = useState('101'); // Currently simulated staff user
+  const [actingStaffId, setActingStaffId] = useState('all'); // Default to all active staff
 
   // Sidebar Workspace Module State
   const [activeTab, setActiveTab] = useState('Dashboard');
+  const [drawerTab, setDrawerTab] = useState<'view' | 'edit'>('view');
 
   // Navigate to a named tab — updates state and URL bar instantly without Next.js navigation.
   // Using history.pushState avoids full page navigation overhead (no component remounting).
@@ -1255,6 +1251,9 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         setCurrentUser(data.user);
         setIsAuthenticated(true);
         setCurrentRole(data.user.role_id);
+        if (String(data.user.role_id) === '4') {
+          setActingStaffId(String(data.user.id));
+        }
       } else {
         setIsAuthenticated(false);
         setCurrentUser(null);
@@ -1297,6 +1296,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           payment_status: b.payment_status || 'Payment Pending',
           assigned_staff_id: b.assigned_staff_id || undefined,
           staff_job_status: b.staff_job_status || undefined,
+          staff_reported_issue: b.staff_reported_issue || undefined,
           internal_notes: b.internal_notes || b.admin_internal_notes || '',
           customer_visible_notes: b.customer_visible_notes || ''
         }));
@@ -1361,6 +1361,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           confirmed_date: booking.confirmed_date,
           confirmed_time: booking.confirmed_time,
           staff_job_status: booking.staff_job_status,
+          staff_reported_issue: booking.staff_reported_issue,
           internal_notes: booking.internal_notes,
           customer_visible_notes: booking.customer_visible_notes
         })
@@ -1378,7 +1379,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
   const switchSimulatedRole = (roleId: string) => {
     setCurrentRole(roleId);
     if (String(roleId) === '4') {
-      navigateTo('Staff Jobs');
+      navigateTo('Assigned Job');
     } else {
       navigateTo('Dashboard');
     }
@@ -1394,8 +1395,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
     const mapping: Record<string, string> = {
       'Dashboard': 'view_dashboard',
       'Orders / Bookings': 'view_orders',
-      'Job Allocation': 'assign_jobs',
-      'Staff Jobs': 'view_staff_jobs',
+      'Assigned Job': 'view_staff_jobs',
       'Users / Customers': 'view_customers',
       'Staff Management': 'manage_staff',
       'Roles & Permissions': 'manage_roles',
@@ -1468,7 +1468,27 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
-        const updatedObj = { ...b, order_status: newStatus };
+        // Synchronize staff_job_status based on order_status
+        let updatedStaffJobStatus = b.staff_job_status;
+        if (newStatus === 'Completed') {
+          updatedStaffJobStatus = 'Completed';
+        } else if (newStatus === 'In Progress') {
+          if (b.staff_job_status !== 'Started' && b.staff_job_status !== 'Completed') {
+            updatedStaffJobStatus = 'Started';
+          }
+        } else if (newStatus === 'Scheduled') {
+          if (b.staff_job_status !== 'Accepted' && b.staff_job_status !== 'On the Way' && b.staff_job_status !== 'Started' && b.staff_job_status !== 'Completed') {
+            updatedStaffJobStatus = 'Accepted';
+          }
+        } else if (newStatus === 'Job Assigned') {
+          updatedStaffJobStatus = 'Pending';
+        }
+
+        const updatedObj = { 
+          ...b, 
+          order_status: newStatus,
+          staff_job_status: updatedStaffJobStatus
+        };
         saveBookingToBackend(updatedObj);
         return updatedObj;
       }
@@ -1483,7 +1503,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
   };
 
   const handleAssignStaff = (orderId: string, staffId: string, instructions: string, confDate: string, confTime: string) => {
-    const staffName = staff.find(s => s.id === staffId)?.name || 'Simulated Cleaner';
+    const staffName = staff.find(s => String(s.id) === String(staffId))?.name || 'Simulated Cleaner';
     const note = `Allocated dedicated job to staff ${staffName}. Schedule: ${confDate} ${confTime}. Instructions: ${instructions}`;
     
     const updated = bookings.map(b => {
@@ -1524,14 +1544,27 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
     alert(`Job successfully allocated to ${staffName}. Notification generated dynamically.`);
   };
 
-  const handleStaffJobUpdate = (orderId: string, nextStatus: 'Accepted' | 'On the Way' | 'Started' | 'Completed' | 'Issue Reported', issueText: string = '') => {
+  const handleStaffJobUpdate = (orderId: string, nextStatus: 'Pending' | 'Accepted' | 'On the Way' | 'Started' | 'Completed' | 'Issue Reported', issueText: string = '') => {
     const updated = bookings.map(b => {
       if (b.id === orderId) {
+        let orderStatus = b.order_status;
+        if (nextStatus === 'Pending') {
+          orderStatus = 'Job Assigned';
+        } else if (nextStatus === 'Accepted') {
+          orderStatus = 'Scheduled';
+        } else if (nextStatus === 'On the Way' || nextStatus === 'Started') {
+          orderStatus = 'In Progress';
+        } else if (nextStatus === 'Completed') {
+          orderStatus = 'Completed';
+        } else if (nextStatus === 'Issue Reported') {
+          orderStatus = 'Under Review';
+        }
+
         const updatedObj = {
           ...b,
           staff_job_status: nextStatus,
           staff_reported_issue: nextStatus === 'Issue Reported' ? issueText : b.staff_reported_issue,
-          order_status: nextStatus === 'Completed' ? 'Completed' : b.order_status
+          order_status: orderStatus
         };
         saveBookingToBackend(updatedObj);
         return updatedObj;
@@ -1822,6 +1855,7 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       currentRole, setCurrentRole,
       actingStaffId, setActingStaffId,
       activeTab, setActiveTab,
+      drawerTab, setDrawerTab,
       navigateTo,
       switchSimulatedRole,
       hasPermission,

@@ -1,31 +1,96 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
-import { getMysql } from '@/lib/mysql';
+import { getMysql, getPool } from '@/lib/mysql';
 import { getLocalBookings, saveLocalBooking, BookingRecord, logEmail } from '@/lib/dbStore';
-import { authorize } from '@/lib/authMiddleware';
+import { authorize, checkPermission } from '@/lib/authMiddleware';
+
+async function ensureMigrationColumns() {
+  try {
+    const mysqlClient = getMysql();
+    if (mysqlClient) {
+      const pool = getPool();
+      
+      // 1. Check bookings table columns for staff_reported_issue
+      const [bookingsCols]: any = await pool.query(`
+        SHOW COLUMNS FROM \`bookings\` LIKE 'staff_reported_issue'
+      `);
+      if (Array.isArray(bookingsCols) && bookingsCols.length === 0) {
+        console.log('[Migration] Adding staff_reported_issue column to bookings table...');
+        await pool.query(`
+          ALTER TABLE \`bookings\` ADD COLUMN \`staff_reported_issue\` TEXT NULL
+        `);
+        console.log('[Migration] Column staff_reported_issue added successfully to bookings table.');
+      }
+
+      // 2. Check orders table columns for staff_reported_issue
+      const [ordersCols]: any = await pool.query(`
+        SHOW COLUMNS FROM \`orders\` LIKE 'staff_reported_issue'
+      `);
+      if (Array.isArray(ordersCols) && ordersCols.length === 0) {
+        console.log('[Migration] Adding staff_reported_issue column to orders table...');
+        await pool.query(`
+          ALTER TABLE \`orders\` ADD COLUMN \`staff_reported_issue\` TEXT NULL
+        `);
+        console.log('[Migration] Column staff_reported_issue added successfully to orders table.');
+      }
+
+      // 3. Check orders table columns for staff_job_status
+      const [ordersStatusCols]: any = await pool.query(`
+        SHOW COLUMNS FROM \`orders\` LIKE 'staff_job_status'
+      `);
+      if (Array.isArray(ordersStatusCols) && ordersStatusCols.length === 0) {
+        console.log('[Migration] Adding staff_job_status column to orders table...');
+        await pool.query(`
+          ALTER TABLE \`orders\` ADD COLUMN \`staff_job_status\` VARCHAR(191) NULL
+        `);
+        console.log('[Migration] Column staff_job_status added successfully to orders table.');
+      }
+    }
+  } catch (err) {
+    console.error('[Migration] Failed to verify or add columns:', err);
+  }
+}
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await authorize(req, 'view_orders');
-    if (!auth.authorized) {
-      return auth.response!;
+    await ensureMigrationColumns();
+    const auth = await authorize(req);
+    if (!auth.authorized || !auth.user) {
+      return auth.response || NextResponse.json({ error: 'Unauthorized.' }, { status: 401 });
+    }
+
+    const user = auth.user;
+    const isStaffUser = String(user.role_id) === '4';
+
+    // If not a staff user, check if they have 'view_orders' permission
+    if (!isStaffUser) {
+      const hasPerm = await checkPermission(user.role_id, 'view_orders');
+      if (!hasPerm) {
+        return NextResponse.json({ error: 'Forbidden. Missing view_orders permission.' }, { status: 403 });
+      }
     }
 
     const mysqlClient = getMysql();
     if (mysqlClient) {
-      const { data, error } = await mysqlClient
-        .from('bookings')
-        .select('*')
-        .order('created_at', { ascending: false });
+      let query = mysqlClient.from('bookings').select('*');
+      
+      if (isStaffUser) {
+        query = query.eq('assigned_staff_id', user.id);
+      }
+
+      const { data, error } = await query.order('created_at', { ascending: false });
       
       if (!error) {
-        const list = data.length > 0 ? data : getLocalBookings();
+        const list = data.length > 0 ? data : (isStaffUser ? getLocalBookings().filter(b => String((b as any).assigned_staff_id) === String(user.id)) : getLocalBookings());
         return NextResponse.json({ bookings: list, orders: list });
       }
       console.error('MySQL fetch error, falling back to memory:', error);
     }
     
-    const local = getLocalBookings();
+    let local = getLocalBookings();
+    if (isStaffUser) {
+      local = local.filter(b => String((b as any).assigned_staff_id) === String(user.id));
+    }
     return NextResponse.json({ bookings: local, orders: local });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

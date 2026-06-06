@@ -71,7 +71,7 @@ export default function DashboardSection() {
         <div className="p-5 bg-white border border-neutral-200 rounded-xl space-y-4">
           <span className="block font-bold font-mono uppercase text-xs text-neutral-500 tracking-wider">Quick Actions</span>
           <div className="flex flex-col gap-2">
-            <button onClick={() => navigateTo('Job Allocation')} className="w-full text-left p-3 hover:bg-neutral-50 border border-neutral-200 rounded-lg flex items-center justify-between text-xs font-semibold cursor-pointer">
+            <button onClick={() => navigateTo('Orders / Bookings')} className="w-full text-left p-3 hover:bg-neutral-50 border border-neutral-200 rounded-lg flex items-center justify-between text-xs font-semibold cursor-pointer">
               <span>Assign Waiting Orders</span>
               <ChevronRight className="w-4 h-4 text-neutral-400" />
             </button>

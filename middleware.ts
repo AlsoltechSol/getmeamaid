@@ -7,8 +7,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'pristine_jwt_atelier_secret_key_99
 const ROUTE_PERMISSIONS: Record<string, string> = {
   'dashboard': 'view_dashboard',
   'orders': 'view_orders',
-  'job-allocation': 'assign_jobs',
-  'staff-jobs': 'view_staff_jobs',
+  'assigned-job': 'view_staff_jobs',
   'customers': 'view_customers',
   'staff': 'manage_staff',
   'roles': 'manage_roles',

@@ -380,6 +380,7 @@ CREATE TABLE bookings (
   confirmed_date VARCHAR(191),
   confirmed_time VARCHAR(191),
   staff_job_status VARCHAR(191),
+  staff_reported_issue TEXT,
   internal_notes TEXT,
   customer_visible_notes TEXT
 );
@@ -428,6 +429,8 @@ CREATE TABLE orders (
     settlement_status VARCHAR(255),
     admin_internal_notes TEXT,
     customer_visible_notes TEXT,
+    staff_reported_issue TEXT,
+    staff_job_status VARCHAR(191),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
