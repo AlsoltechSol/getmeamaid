@@ -1,12 +1,60 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getMysql } from '@/lib/mysql';
+import { getMysql, getPool } from '@/lib/mysql';
 import { getDbAsync, triggerEmail } from '@/lib/db';
 import { authorize, checkPermission } from '@/lib/authMiddleware';
+
+async function ensureMigrationColumns() {
+  try {
+    const mysqlClient = getMysql();
+    if (mysqlClient) {
+      const pool = getPool();
+      
+      // 1. Check bookings table columns for staff_reported_issue
+      const [bookingsCols]: any = await pool.query(`
+        SHOW COLUMNS FROM \`bookings\` LIKE 'staff_reported_issue'
+      `);
+      if (Array.isArray(bookingsCols) && bookingsCols.length === 0) {
+        console.log('[Migration] Adding staff_reported_issue column to bookings table...');
+        await pool.query(`
+          ALTER TABLE \`bookings\` ADD COLUMN \`staff_reported_issue\` TEXT NULL
+        `);
+        console.log('[Migration] Column staff_reported_issue added successfully to bookings table.');
+      }
+
+      // 2. Check orders table columns for staff_reported_issue
+      const [ordersCols]: any = await pool.query(`
+        SHOW COLUMNS FROM \`orders\` LIKE 'staff_reported_issue'
+      `);
+      if (Array.isArray(ordersCols) && ordersCols.length === 0) {
+        console.log('[Migration] Adding staff_reported_issue column to orders table...');
+        await pool.query(`
+          ALTER TABLE \`orders\` ADD COLUMN \`staff_reported_issue\` TEXT NULL
+        `);
+        console.log('[Migration] Column staff_reported_issue added successfully to orders table.');
+      }
+
+      // 3. Check orders table columns for staff_job_status
+      const [ordersStatusCols]: any = await pool.query(`
+        SHOW COLUMNS FROM \`orders\` LIKE 'staff_job_status'
+      `);
+      if (Array.isArray(ordersStatusCols) && ordersStatusCols.length === 0) {
+        console.log('[Migration] Adding staff_job_status column to orders table...');
+        await pool.query(`
+          ALTER TABLE \`orders\` ADD COLUMN \`staff_job_status\` VARCHAR(191) NULL
+        `);
+        console.log('[Migration] Column staff_job_status added successfully to orders table.');
+      }
+    }
+  } catch (err) {
+    console.error('[Migration] Failed to verify or add columns:', err);
+  }
+}
 
 export async function PUT(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const { id } = params;
   try {
+    await ensureMigrationColumns();
     const mysqlClient = getMysql();
     if (!mysqlClient) {
       return NextResponse.json({ error: 'Database client not initialized.' }, { status: 500 });
@@ -90,16 +138,42 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
 
     // Check permissions for administrative operations
     if (isAuthorizedAdmin) {
-      let requiredPermission = 'edit_orders';
-      if (body.assigned_staff_id !== undefined) {
-        requiredPermission = 'assign_jobs';
-      } else if (body.order_status !== undefined) {
-        requiredPermission = 'update_order_status';
-      }
+      const isStaffUser = String(user.role_id) === '4';
 
-      const hasPerm = await checkPermission(user.role_id, requiredPermission);
-      if (!hasPerm) {
-        return NextResponse.json({ error: `Forbidden. Missing required permission: ${requiredPermission}` }, { status: 403 });
+      if (isStaffUser) {
+        // Staff can only update their own assigned booking
+        if (String(existing.assigned_staff_id) !== String(user.id)) {
+          return NextResponse.json({ error: 'Forbidden. You can only update jobs assigned to yourself.' }, { status: 403 });
+        }
+
+        // Validate that staff is not attempting to change disallowed fields
+        if (body.assigned_staff_id !== undefined && String(body.assigned_staff_id) !== String(existing.assigned_staff_id || '')) {
+          return NextResponse.json({ error: 'Forbidden. Staff cannot reassign jobs.' }, { status: 403 });
+        }
+        if (body.confirmed_date !== undefined && String(body.confirmed_date) !== String(existing.confirmed_date || '')) {
+          return NextResponse.json({ error: 'Forbidden. Staff cannot change confirmed date.' }, { status: 403 });
+        }
+        if (body.confirmed_time !== undefined && String(body.confirmed_time) !== String(existing.confirmed_time || '')) {
+          return NextResponse.json({ error: 'Forbidden. Staff cannot change confirmed time.' }, { status: 403 });
+        }
+        if (body.payment_status !== undefined && String(body.payment_status) !== String(existing.payment_status || '')) {
+          return NextResponse.json({ error: 'Forbidden. Staff cannot edit payment status.' }, { status: 403 });
+        }
+        if (body.final_confirmed_price !== undefined) {
+          return NextResponse.json({ error: 'Forbidden. Staff cannot edit price details.' }, { status: 403 });
+        }
+      } else {
+        let requiredPermission = 'edit_orders';
+        if (body.assigned_staff_id !== undefined) {
+          requiredPermission = 'assign_jobs';
+        } else if (body.order_status !== undefined) {
+          requiredPermission = 'update_order_status';
+        }
+
+        const hasPerm = await checkPermission(user.role_id, requiredPermission);
+        if (!hasPerm) {
+          return NextResponse.json({ error: `Forbidden. Missing required permission: ${requiredPermission}` }, { status: 403 });
+        }
       }
     }
 
@@ -121,6 +195,7 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
     if (body.confirmed_date !== undefined) updatePayload.confirmed_date = body.confirmed_date;
     if (body.confirmed_time !== undefined) updatePayload.confirmed_time = body.confirmed_time;
     if (body.staff_job_status !== undefined) updatePayload.staff_job_status = body.staff_job_status;
+    if (body.staff_reported_issue !== undefined) updatePayload.staff_reported_issue = body.staff_reported_issue;
     if (admin_internal_notes !== undefined) updatePayload.internal_notes = admin_internal_notes;
     if (body.internal_notes !== undefined) updatePayload.internal_notes = body.internal_notes;
     if (customer_visible_notes !== undefined) updatePayload.customer_visible_notes = customer_visible_notes;
@@ -232,6 +307,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   const params = await props.params;
   const { id } = params;
   try {
+    await ensureMigrationColumns();
     const mysqlClient = getMysql();
     if (!mysqlClient) {
       return NextResponse.json({ error: 'Database client not initialized.' }, { status: 500 });
@@ -248,8 +324,15 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     let isAuthorizedAdmin = auth.authorized;
     let user = auth.user;
 
+    // Check if the user is a staff member assigned to this job
+    if (!isAuthorizedAdmin && user && String(user.role_id) === '4') {
+      if (String(order.assigned_staff_id) === String(user.id)) {
+        isAuthorizedAdmin = true;
+      }
+    }
+
     if (!isAuthorizedAdmin) {
-      // 2. If not admin, check if they are the customer
+      // 2. If not admin/assigned staff, check if they are the customer
       const userIdCookie = req.cookies.get('pristine_user_id')?.value;
       if (userIdCookie) {
         const { data: usersList } = await mysqlClient.from('users').select('*').eq('id', userIdCookie);

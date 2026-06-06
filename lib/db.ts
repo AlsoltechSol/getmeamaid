@@ -114,6 +114,8 @@ export interface Order {
   settlement_status: 'Payment Pending' | 'Payment Link Sent' | 'Paid' | 'Scheduled' | 'Service Completed' | 'Settled' | 'Closed' | 'Cancelled' | 'Refund Required';
   admin_internal_notes: string;
   customer_visible_notes: string;
+  staff_job_status?: string;
+  staff_reported_issue?: string;
   created_at: string;
   updated_at: string;
 }
@@ -754,7 +756,9 @@ export async function getDbAsync(): Promise<DbSchema> {
         original_estimated_price: Number(o.original_estimated_price),
         discount_amount: Number(o.discount_amount),
         final_estimated_price: Number(o.final_estimated_price),
-        final_confirmed_price: o.final_confirmed_price !== null && o.final_confirmed_price !== undefined ? Number(o.final_confirmed_price) : null
+        final_confirmed_price: o.final_confirmed_price !== null && o.final_confirmed_price !== undefined ? Number(o.final_confirmed_price) : null,
+        staff_job_status: o.staff_job_status || undefined,
+        staff_reported_issue: o.staff_reported_issue || undefined
       }));
     }
     if (!orderStatusHistoryRes.error && orderStatusHistoryRes.data && orderStatusHistoryRes.data.length > 0) db.orderStatusHistory = orderStatusHistoryRes.data;
@@ -870,6 +874,8 @@ async function pushToMysqlBackground(schema: DbSchema): Promise<void> {
       settlement_status: o.settlement_status,
       admin_internal_notes: o.admin_internal_notes,
       customer_visible_notes: o.customer_visible_notes,
+      staff_job_status: o.staff_job_status || null,
+      staff_reported_issue: o.staff_reported_issue || null,
       created_at: o.created_at,
       updated_at: o.updated_at
     }));
